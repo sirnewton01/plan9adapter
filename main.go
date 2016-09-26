@@ -293,6 +293,10 @@ func main() {
 					// TODO whatever version the client wants (for now)
 					return msg, nil
 
+				case p9p.MessageTauth:
+					// TODO allocate the qid properly for this auth
+					return p9p.MessageRauth{Qid: p9p.Qid{Type: p9p.QTFILE, Version: 0, Path: 100000}}, nil
+
 				case p9p.MessageTattach:
 					// We assume that the first entry is the root and it is a directory
 					root, _ := ENTRIES[0].(*DirEntry)
@@ -302,6 +306,13 @@ func main() {
 				case p9p.MessageTwalk:
 					entry := ENTRIES[FIDS[t.Fid]]
 					found := true
+
+					// Trivial case, no names given, simple aliasing
+					if len(t.Wnames) == 0 {
+						FIDS[t.Newfid] = entry.Qid().Path
+						return p9p.MessageRwalk{[]p9p.Qid{}}, nil
+					}
+
 					// Perform the walk
 					for _, name := range t.Wnames {
 						direntry, ok := entry.(*DirEntry)
@@ -324,6 +335,10 @@ func main() {
 				case p9p.MessageTclunk:
 					delete(FIDS, t.Fid)
 					return p9p.MessageRclunk{}, nil
+
+				case p9p.MessageTstat:
+					entry := ENTRIES[FIDS[t.Fid]]
+					return p9p.MessageRstat{Stat: *entry.DirStat()}, nil
 
 				case p9p.MessageTopen:
 					entry := ENTRIES[FIDS[t.Fid]]
