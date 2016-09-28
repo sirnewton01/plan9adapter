@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/docker/go-p9p"
 	"golang.org/x/net/context"
@@ -18,6 +19,7 @@ var (
 	STDFILEMODE uint32
 	STDDIRMODE  uint32
 
+	MUTEX      sync.Mutex
 	FIDS       map[p9p.Fid]uint64
 	ENTRYCOUNT uint64  = 0
 	ENTRIES    []Entry = make([]Entry, 0)
@@ -113,6 +115,19 @@ func (direntry *DirEntry) Contents() []byte {
 	return buffer.Bytes()
 }
 
+func (direntry *DirEntry) Read(offset uint64, count uint32) ([]byte, error) {
+	MUTEX.Lock()
+	defer MUTEX.Unlock()
+
+	contents := direntry.Contents()
+
+	if offset+uint64(count) > uint64(len(contents)) {
+		return nil, errors.New("Read past end of file")
+	}
+
+	return contents[offset : offset+uint64(count)], nil
+}
+
 func (direntry *DirEntry) Write(data []byte, offset uint64) (uint32, error) {
 	return 0, errors.New("Cannot write to directories")
 }
@@ -153,8 +168,14 @@ func (staticfile *StaticFileEntry) Size() uint32 {
 	return uint32(len(staticfile.Data))
 }
 
-func (staticfile *StaticFileEntry) Contents() []byte {
-	return staticfile.Data
+func (staticfile *StaticFileEntry) Read(offset uint64, count uint32) ([]byte, error) {
+	MUTEX.Lock()
+	defer MUTEX.Unlock()
+
+	if offset+uint64(count) > uint64(len(staticfile.Data)) {
+		return nil, errors.New("Read past end of file")
+	}
+	return staticfile.Data[offset : offset+uint64(count)], nil
 }
 
 func (staticfile *StaticFileEntry) Write(data []byte, offset uint64) (uint32, error) {
@@ -203,8 +224,17 @@ func (clonefile *CloneFileEntry) Size() uint32 {
 	return uint32(len([]byte(strconv.Itoa(clonefile.Number))))
 }
 
-func (clonefile *CloneFileEntry) Contents() []byte {
-	return []byte(strconv.Itoa(clonefile.Number))
+func (clonefile *CloneFileEntry) Read(offset uint64, count uint32) ([]byte, error) {
+	MUTEX.Lock()
+	defer MUTEX.Unlock()
+
+	var ret []byte = []byte(strconv.Itoa(clonefile.Number))
+
+	if offset+uint64(count) > uint64(len(ret)) {
+		return nil, errors.New("Read past end of file")
+	}
+
+	return ret, nil
 }
 
 func (clonefile *CloneFileEntry) Write(data []byte, offset uint64) (uint32, error) {
@@ -229,7 +259,7 @@ type Entry interface {
 	Qid() p9p.Qid
 	DirStat() *p9p.Dir
 	Size() uint32
-	Contents() []byte
+	Read(offset uint64, count uint32) ([]byte, error)
 	Write(data []byte, offset uint64) (uint32, error)
 }
 
@@ -299,11 +329,17 @@ func main() {
 
 				case p9p.MessageTattach:
 					// We assume that the first entry is the root and it is a directory
+					MUTEX.Lock()
+					defer MUTEX.Unlock()
+
 					root, _ := ENTRIES[0].(*DirEntry)
 					FIDS[t.Fid] = root.Id.Path
 					return p9p.MessageRattach{Qid: *root.Id}, nil
 
 				case p9p.MessageTwalk:
+					MUTEX.Lock()
+					defer MUTEX.Unlock()
+
 					entry := ENTRIES[FIDS[t.Fid]]
 					found := true
 
@@ -333,14 +369,23 @@ func main() {
 					return p9p.MessageRwalk{[]p9p.Qid{qid}}, nil
 
 				case p9p.MessageTclunk:
+					MUTEX.Lock()
+					defer MUTEX.Unlock()
+
 					delete(FIDS, t.Fid)
 					return p9p.MessageRclunk{}, nil
 
 				case p9p.MessageTstat:
+					MUTEX.Lock()
+					defer MUTEX.Unlock()
+
 					entry := ENTRIES[FIDS[t.Fid]]
 					return p9p.MessageRstat{Stat: *entry.DirStat()}, nil
 
 				case p9p.MessageTopen:
+					MUTEX.Lock()
+					defer MUTEX.Unlock()
+
 					entry := ENTRIES[FIDS[t.Fid]]
 
 					clonefile, ok := entry.(*CloneFileEntry)
@@ -351,28 +396,34 @@ func main() {
 					return p9p.MessageRopen{Qid: entry.Qid(), IOUnit: entry.Size()}, nil
 					// TODO at least fail it if the file is not writable
 				case p9p.MessageTread:
+					MUTEX.Lock()
+
 					entry := ENTRIES[FIDS[t.Fid]]
 					offset := t.Offset
-					// TODO let each entry type determine how to handle the offset and end
-					end := offset + uint64(t.Count)
-					contents := entry.Contents()
+					count := t.Count
 
-					if offset > uint64(len(contents)) {
-						// TODO confirm what the usual plan9 behaviour is for reading past the end of the file
-						return p9p.MessageRread{Data: []byte{}}, nil
-					}
-					if end > uint64(len(contents)) {
-						end = uint64(len(contents))
+					// We'll unlock to allow the entry to do its own locking and synchronization.
+					// We do this because some reads may block for a long time, such as network reads.
+					readFunc := entry.Read
+					MUTEX.Unlock()
+					data, err := readFunc(offset, count)
+					if err != nil {
+						return p9p.MessageRerror{Ename: err.Error()}, nil
 					}
 
-					return p9p.MessageRread{Data: contents[offset:end]}, nil
+					return p9p.MessageRread{Data: data}, nil
 				case p9p.MessageTwrite:
+					MUTEX.Lock()
+
 					entry := ENTRIES[FIDS[t.Fid]]
 
 					offset := t.Offset
 					data := t.Data
 
-					count, err := entry.Write(data, offset)
+					writeFunc := entry.Write
+					MUTEX.Unlock()
+
+					count, err := writeFunc(data, offset)
 					if err != nil {
 						return p9p.MessageRerror{Ename: err.Error()}, nil
 					}
