@@ -122,7 +122,8 @@ func (direntry *DirEntry) Read(offset uint64, count uint32) ([]byte, error) {
 	contents := direntry.Contents()
 
 	if offset+uint64(count) > uint64(len(contents)) {
-		return nil, errors.New("Read past end of file")
+		//return nil, errors.New("Read past end of file")
+		return []byte{}, nil
 	}
 
 	return contents[offset : offset+uint64(count)], nil
@@ -173,7 +174,8 @@ func (staticfile *StaticFileEntry) Read(offset uint64, count uint32) ([]byte, er
 	defer MUTEX.Unlock()
 
 	if offset+uint64(count) > uint64(len(staticfile.Data)) {
-		return nil, errors.New("Read past end of file")
+		//return nil, errors.New("Read past end of file")
+		return []byte{}, nil
 	}
 	return staticfile.Data[offset : offset+uint64(count)], nil
 }
@@ -231,7 +233,8 @@ func (clonefile *CloneFileEntry) Read(offset uint64, count uint32) ([]byte, erro
 	var ret []byte = []byte(strconv.Itoa(clonefile.Number))
 
 	if offset+uint64(count) > uint64(len(ret)) {
-		return nil, errors.New("Read past end of file")
+		//return nil, errors.New("Read past end of file")
+		return []byte{}, nil
 	}
 
 	return ret, nil
@@ -251,7 +254,17 @@ func (clonefile *CloneFileEntry) Clone() {
 	clonefile.cloned = true
 
 	newdir := NewDirEntry(strconv.Itoa(clonefile.Number))
+	local := NewStaticFileEntry("local", "127.0.0.1")
+	remote := NewStaticFileEntry("remote", "127.0.0.1")
+	status := NewStaticFileEntry("status", "ok")
+	err := NewStaticFileEntry("err", "")
 	newdir.AddChild(clonefile)
+	newdir.AddChild(local)
+	newdir.AddChild(local)
+	newdir.AddChild(remote)
+	newdir.AddChild(status)
+	newdir.AddChild(err)
+	newdir.AddChild(remote)
 	parent.AddChild(newdir)
 }
 
