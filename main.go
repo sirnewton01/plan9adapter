@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/go-p9p"
 	"golang.org/x/net/context"
@@ -269,6 +271,64 @@ func (clonefile *CloneFileEntry) Clone() {
 	AddNewConn(clonefile, parent)
 }
 
+type TimeFileEntry struct {
+	Name string
+	Id   *p9p.Qid
+}
+
+func NewTimeFileEntry(name string) *TimeFileEntry {
+	var timefile TimeFileEntry
+	timefile.Name = name
+	timefile.Id = &p9p.Qid{Type: p9p.QTFILE, Version: 0, Path: ENTRYCOUNT}
+	ENTRIES = append(ENTRIES, &timefile)
+	ENTRYCOUNT++
+	return &timefile
+}
+
+func (timefile *TimeFileEntry) Qid() p9p.Qid {
+	return *timefile.Id
+}
+
+func (timefile *TimeFileEntry) DirStat() *p9p.Dir {
+	return &p9p.Dir{
+		Qid:    *timefile.Id,
+		Mode:   STDFILEMODE,
+		Length: uint64(0),
+		Name:   timefile.Name,
+		UID:    "nobody",
+		GID:    "nobody",
+		MUID:   "nobody",
+	}
+}
+
+func (timefile *TimeFileEntry) Size() uint32 {
+	return uint32(0)
+}
+
+func (timefile *TimeFileEntry) Read(offset uint64, count uint32) ([]byte, error) {
+	MUTEX.Lock()
+	defer MUTEX.Unlock()
+
+	t := time.Now()
+
+	// TODO add clock ticks and clock frequency. Also, pad it like it does in plan9.
+	result := []byte(fmt.Sprintf("%v %v %v %v\n", t.Unix(), t.UnixNano(), 0, 0))
+
+	if offset > uint64(len(result)) {
+		return []byte{}, nil
+	}
+
+	if offset+uint64(count) > uint64(len(result)) {
+		count = uint32(uint64(len(result)) - offset)
+	}
+
+	return result[offset : offset+uint64(count)], nil
+}
+
+func (timefile *TimeFileEntry) Write(data []byte, offset uint64) (uint32, error) {
+	return 0, errors.New("Write is not supported")
+}
+
 type Entry interface {
 	Qid() p9p.Qid
 	DirStat() *p9p.Dir
@@ -302,6 +362,13 @@ func init() {
 
 	dns := NewStaticFileEntry("dns", "")
 	net.AddChild(dns)
+
+	// Set up a limited /dev directory
+	dev := NewDirEntry("dev")
+	root.AddChild(dev)
+
+	time := NewTimeFileEntry("time")
+	dev.AddChild(time)
 }
 
 func main() {
