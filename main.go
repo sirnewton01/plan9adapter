@@ -121,9 +121,13 @@ func (direntry *DirEntry) Read(offset uint64, count uint32) ([]byte, error) {
 
 	contents := direntry.Contents()
 
-	if offset+uint64(count) > uint64(len(contents)) {
+	if offset > uint64(len(contents)) {
 		//return nil, errors.New("Read past end of file")
 		return []byte{}, nil
+	}
+
+	if offset+uint64(count) > uint64(len(contents)) {
+		count = uint32(uint64(len(contents)) - offset)
 	}
 
 	return contents[offset : offset+uint64(count)], nil
@@ -173,22 +177,29 @@ func (staticfile *StaticFileEntry) Read(offset uint64, count uint32) ([]byte, er
 	MUTEX.Lock()
 	defer MUTEX.Unlock()
 
-	if offset+uint64(count) > uint64(len(staticfile.Data)) {
+	if offset > uint64(len(staticfile.Data)) {
 		//return nil, errors.New("Read past end of file")
 		return []byte{}, nil
 	}
+
+	if offset+uint64(count) > uint64(len(staticfile.Data)) {
+		count = uint32(uint64(len(staticfile.Data)) - offset)
+	}
+
 	return staticfile.Data[offset : offset+uint64(count)], nil
 }
 
 func (staticfile *StaticFileEntry) Write(data []byte, offset uint64) (uint32, error) {
-	return 0, errors.New("Cannot write to static file")
+	//return 0, errors.New("Cannot write to static file")
+	return 0, nil
 }
 
 type CloneFileEntry struct {
-	cloned bool
-	Number int
-	Id     *p9p.Qid
-	Proto  *DirEntry
+	cloned  bool
+	Number  int
+	Id      *p9p.Qid
+	Proto   *DirEntry
+	netconn *NetConn
 }
 
 func NewCloneFileEntry(proto *DirEntry, number int) *CloneFileEntry {
@@ -232,16 +243,18 @@ func (clonefile *CloneFileEntry) Read(offset uint64, count uint32) ([]byte, erro
 
 	var ret []byte = []byte(strconv.Itoa(clonefile.Number))
 
-	if offset+uint64(count) > uint64(len(ret)) {
-		//return nil, errors.New("Read past end of file")
-		return []byte{}, nil
-	}
-
+	// TODO we should be able to handle offset and count here
 	return ret, nil
 }
 
 func (clonefile *CloneFileEntry) Write(data []byte, offset uint64) (uint32, error) {
-	return 0, errors.New("Clone file doesn't support write")
+	if !clonefile.cloned {
+		return 0, errors.New("Clone file doesn't support write")
+
+	}
+
+	err := clonefile.netconn.Command(string(data))
+	return 0, err
 }
 
 func (clonefile *CloneFileEntry) Clone() {
@@ -253,19 +266,7 @@ func (clonefile *CloneFileEntry) Clone() {
 	parent.AddChild(NewCloneFileEntry(parent, clonefile.Number+1))
 	clonefile.cloned = true
 
-	newdir := NewDirEntry(strconv.Itoa(clonefile.Number))
-	local := NewStaticFileEntry("local", "127.0.0.1")
-	remote := NewStaticFileEntry("remote", "127.0.0.1")
-	status := NewStaticFileEntry("status", "ok")
-	err := NewStaticFileEntry("err", "")
-	newdir.AddChild(clonefile)
-	newdir.AddChild(local)
-	newdir.AddChild(local)
-	newdir.AddChild(remote)
-	newdir.AddChild(status)
-	newdir.AddChild(err)
-	newdir.AddChild(remote)
-	parent.AddChild(newdir)
+	AddNewConn(clonefile, parent)
 }
 
 type Entry interface {
@@ -295,6 +296,12 @@ func init() {
 	tcp := NewDirEntry("tcp")
 	net.AddChild(tcp)
 	tcp.AddChild(NewCloneFileEntry(tcp, 0))
+
+	cs := NewConnectionServerEntry("cs")
+	net.AddChild(cs)
+
+	dns := NewStaticFileEntry("dns", "")
+	net.AddChild(dns)
 }
 
 func main() {
@@ -362,6 +369,7 @@ func main() {
 						return p9p.MessageRwalk{[]p9p.Qid{}}, nil
 					}
 
+					qids := []p9p.Qid{}
 					// Perform the walk
 					for _, name := range t.Wnames {
 						direntry, ok := entry.(*DirEntry)
@@ -373,13 +381,15 @@ func main() {
 						if !found && !(len(t.Wnames) == 1 && name == "") { // Weird case with 9pr
 							return p9p.MessageRerror{Ename: name + " not found"}, nil
 						}
+
+						qids = append(qids, entry.Qid())
 					}
 
-					qid := entry.Qid()
-					FIDS[t.Newfid] = qid.Path
+					leafqid := entry.Qid()
+					FIDS[t.Newfid] = leafqid.Path
 
 					// TODO figure out what else should go in the array of qids to return to the client
-					return p9p.MessageRwalk{[]p9p.Qid{qid}}, nil
+					return p9p.MessageRwalk{qids}, nil
 
 				case p9p.MessageTclunk:
 					MUTEX.Lock()
