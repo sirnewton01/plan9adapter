@@ -46,7 +46,13 @@ func (cse *ConnectionServerEntry) Size() uint32 {
 }
 
 func (cse *ConnectionServerEntry) Read(offset uint64, count uint32) ([]byte, error) {
-	return []byte(cse.result), nil
+	b := []byte(cse.result)
+
+	if offset >= uint64(len(b)) {
+		return []byte{}, nil
+	}
+
+	return b[offset:], nil
 }
 
 func (cse *ConnectionServerEntry) Write(data []byte, offset uint64) (uint32, error) {
@@ -57,8 +63,12 @@ func (cse *ConnectionServerEntry) Write(data []byte, offset uint64) (uint32, err
 		return 0, errors.New("Unknown command: " + command)
 	}
 	proto := components[0]
-	if proto != "tcp" && proto != "udp" {
+	if proto != "tcp" && proto != "udp" && proto != "net" {
 		return 0, errors.New("Uknown protocol: " + proto)
+	}
+	if proto == "net" {
+		// TODO this is a terrible assumption
+		proto = "tcp"
 	}
 	result += proto + "/clone "
 
@@ -88,7 +98,7 @@ func (cse *ConnectionServerEntry) Write(data []byte, offset uint64) (uint32, err
 
 	cse.result = results
 
-	return 0, nil
+	return uint32(len(data)), nil
 }
 
 type NetConn struct {
