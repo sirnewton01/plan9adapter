@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -108,7 +107,6 @@ func (nc *NetConn) Command(cmd string) error {
 		components := strings.Split(cmd, " ")
 		address := components[1]
 		address = strings.Replace(address, "!", ":", 1)
-		fmt.Printf("Dialing %v\n", address)
 		conn, err := net.Dial(nc.proto, address)
 		if err != nil {
 			return err
@@ -200,8 +198,6 @@ func (ncf *NetConnFile) Read(offset uint64, count uint32) ([]byte, error) {
 		return []byte{}, err
 	}
 
-	fmt.Printf("READ: %v", string(buf[:n]))
-
 	return buf[:n], err
 }
 
@@ -210,8 +206,6 @@ func (ncf *NetConnFile) Write(data []byte, offset uint64) (uint32, error) {
 	if ncf.nc.conn == nil {
 		return 0, errors.New("No connection established, cannot write data")
 	}
-
-	fmt.Printf("WRITE: %v", string(data))
 
 	n, err := ncf.nc.conn.Write(data)
 	return uint32(n), err
