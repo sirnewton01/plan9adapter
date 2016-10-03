@@ -236,7 +236,9 @@ func (clonefile *CloneFileEntry) DirStat() *p9p.Dir {
 }
 
 func (clonefile *CloneFileEntry) Size() uint32 {
-	return uint32(len([]byte(strconv.Itoa(clonefile.Number))))
+	//return uint32(len([]byte(strconv.Itoa(clonefile.Number))))
+	// TODO The io unit is a bit puzzling in this case. Why does plan9 chop off its commands to the size of the io unit?
+	return uint32(4294967295)
 }
 
 func (clonefile *CloneFileEntry) Read(offset uint64, count uint32) ([]byte, error) {
@@ -245,8 +247,11 @@ func (clonefile *CloneFileEntry) Read(offset uint64, count uint32) ([]byte, erro
 
 	var ret []byte = []byte(strconv.Itoa(clonefile.Number))
 
-	// TODO we should be able to handle offset and count here
-	return ret, nil
+	if offset >= uint64(len(ret)) {
+		return []byte{}, nil
+	}
+
+	return ret[offset:], nil
 }
 
 func (clonefile *CloneFileEntry) Write(data []byte, offset uint64) (uint32, error) {
