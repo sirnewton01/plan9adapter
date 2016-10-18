@@ -374,6 +374,9 @@ func init() {
 
 	time := NewTimeFileEntry("time")
 	dev.AddChild(time)
+
+	audio := NewAudioFileEntry("audio")
+	dev.AddChild(audio)
 }
 
 func main() {
@@ -407,7 +410,7 @@ func main() {
 			log.Println("connected", conn.RemoteAddr())
 
 			var handler p9p.HandlerFunc = func(ctx context.Context, msg p9p.Message) (p9p.Message, error) {
-				log.Printf("Message: %T %+v\n", msg, msg)
+				//log.Printf("Message: %T %+v\n", msg, msg)
 
 				switch t := msg.(type) {
 
@@ -531,7 +534,7 @@ func main() {
 
 			var handlerLog p9p.HandlerFunc = func(ctx context.Context, msg p9p.Message) (p9p.Message, error) {
 				msg, err := handler(ctx, msg)
-				log.Printf("Message: %T %+v\n", msg, msg)
+				//log.Printf("Message: %T %+v\n", msg, msg)
 				return msg, err
 			}
 
