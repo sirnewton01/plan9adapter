@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/docker/go-p9p"
 	"github.com/gordonklaus/portaudio"
@@ -43,7 +44,7 @@ func (audiofile *AudioFileEntry) DirStat() *p9p.Dir {
 }
 
 func (audiofile *AudioFileEntry) Size() uint32 {
-	return uint32(10 * 1024) // 10K buffer (audio(1) says that the reported file size represents the buffer size)
+	return uint32(10 * 1024) // 10K buffer (audio(3) says that the reported file size represents the buffer size)
 }
 
 func (audiofile *AudioFileEntry) Read(offset uint64, count uint32) ([]byte, error) {
@@ -53,16 +54,29 @@ func (audiofile *AudioFileEntry) Read(offset uint64, count uint32) ([]byte, erro
 func (audiofile *AudioFileEntry) Write(data []byte, offset uint64) (uint32, error) {
 	audiofile.mutex.Lock()
 	defer audiofile.mutex.Unlock()
+
+	// Spin and sleep waiting for the buffer to be sent to the audio device
+	for len(audiofile.buf) > 10*1024 {
+		audiofile.mutex.Unlock()
+		<-time.After(10 * time.Millisecond)
+		audiofile.mutex.Lock()
+	}
+
 	audiofile.buf = append(audiofile.buf, data...)
 
 	if audiofile.writer == nil {
 		audiofile.writer = func() {
 			portaudio.Initialize()
+			// 44.1 KHz, stereo according to audio(3)
 			stream, err := portaudio.OpenDefaultStream(0, 2, 44100, 0, func(out [][]int16) {
 				audiofile.mutex.Lock()
 				defer audiofile.mutex.Unlock()
 
 				if len(audiofile.buf) < 4*len(out[0]) {
+					for i := range out[0] {
+						out[0][i] = 0
+						out[1][i] = 0
+					}
 					return
 				}
 
